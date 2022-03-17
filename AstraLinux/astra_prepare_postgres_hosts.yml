@@ -1,0 +1,14 @@
+---
+- hosts: "{{ target }}"  # ansible-playbook install_packages.yaml -e target=group1
+  become: yes
+  become_method: sudo
+  gather_facts: no
+  tasks:
+    - name: Install packages
+      package:
+        name: [telnet,net-tools,open-vm-tools,dialog,apt-utils,wget]
+        state: present
+      ignore_errors: True
+
+    - name: Execute localedef
+      shell: localedef -i en_US -f UTF-8 en_US.UTF-8

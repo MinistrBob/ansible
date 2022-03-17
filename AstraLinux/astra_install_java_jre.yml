@@ -1,0 +1,9 @@
+- hosts: kafka-all
+  become: yes
+  become_method: sudo
+  gather_facts: no
+  tasks:
+    - name: Install openjdk JRE
+      apt:
+        name: [openjdk-11-jre]
+        state: present

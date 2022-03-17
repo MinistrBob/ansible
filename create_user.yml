@@ -1,0 +1,11 @@
+- hosts: kafka-all
+  become: yes
+  become_method: sudo
+  gather_facts: no
+  tasks:
+    - name: Create user
+      user:
+        name: kafka
+#        comment: John Doe
+#        uid: 1040
+#        group: admin
