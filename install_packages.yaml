@@ -1,0 +1,11 @@
+---
+- hosts: "{{ target }}"  # ansible-playbook install_packages.yaml -e target=group1
+  become: yes
+  become_method: sudo
+  gather_facts: no
+  tasks:
+    - name: Install packages
+      package:
+        name: [vim,nano,mc,bash-completion,wget,curl,yum-utils,lvm2,device-mapper-persistent-data]
+        state: present
+      ignore_errors: True
