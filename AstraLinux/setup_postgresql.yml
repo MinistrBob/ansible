@@ -1,0 +1,191 @@
+---
+- hosts: postgresql
+  become: yes
+  become_method: sudo
+  gather_facts: no
+  vars:
+    stand_name: "pp"
+    pg_admin: "postgres"
+    pg_admin_password: "postgres"
+    pg_replicator: "replicator"  # User for primary-standby replication
+    pg_replicator_password: "replicator"
+    pg_version: 11
+    pg_autorestart_postgresql_on: true  # Turning on autorestart postgresql service with systemd in file /lib/systemd/system/postgresql@.service
+    pg_psql: "/usr/bin/psql"
+    pg_dropcluster: "/usr/bin/pg_dropcluster"  # cluster removal utility
+    pg_createcluster: "/usr/bin/pg_createcluster"  # cluster create utility
+    pg_cluster_name: "main"
+    pg_service_name: "postgresql@{{ pg_version }}-{{ pg_cluster_name }}"  # This service name is usually on "like Debian" OS
+    pg_data_dir: "/var/lib/postgresql/{{ pg_version }}/{{ pg_cluster_name }}"  # This is default path for postgresql DB cluster on "like Debian" OS
+    #pg_data_dir: "/mnt/data/postgresql/{{ pg_version }}/{{ pg_cluster_name }}"  # This is NOT default path for postgresql DB cluster
+    pg_conf_dir: "/etc/postgresql/{{ pg_version }}/{{ pg_cluster_name }}"  # This is default path for postgresql configuration files on "like Debian" OS
+  tasks:
+    - name: Install en_US.UTF-8 locale if needed
+      locale_gen:
+        name: en_US.UTF-8
+        state: present
+#      when: eng_messages
+
+    # package dialog for fix:
+    #   debconf: не удалось инициализировать интерфейс: Dialog
+    #   debconf: (Ни одна из dialog-подобных программ не установлена, поэтому вы не можете использовать dialog-интерфейс. at /usr/share/perl5/Debconf/FrontEnd/Dialog.pm line 76.)
+    #   debconf: будет использован интерфейс: Readline
+    - name: Install required packages
+      apt:
+        name:
+          - python-apt
+          - dialog
+          - apt-utils
+          - python3-psycopg2
+          - python-psycopg2
+        state: present
+
+    - name: "Allow port 5432"
+      ufw:
+        rule: allow
+        port: '5432'
+        proto: tcp
+
+    - name: "Install postgresql packages"
+      package:
+        name:
+          - "postgresql"
+          - "postgresql-client"
+        state: present
+        update_cache: yes
+      register: postgresql_installed
+
+    - name: Change postgres user password
+      user:
+        name: "{{ pg_admin }}"
+        state: present
+        password: "{{ pg_admin_password | password_hash('sha512') }}"
+
+    - name: Stop postgresql service {{ pg_service_name }}
+      systemd:
+        name: "{{ pg_service_name }}"
+        state: stopped
+#      when: postgresql_installed.changed
+
+    - name: Drop the default cluster
+      shell: "{{ pg_dropcluster }} {{ pg_version }} {{ pg_cluster_name }}"
+      when: postgresql_installed.changed
+      become: true
+      become_user: "{{ pg_admin }}"
+      register: drop_database
+      changed_when: drop_database.rc == 0
+      failed_when: drop_database.rc != 0
+
+    # @FORPRIMARY
+    # Create postgresql DB cluster with checksums (option --data-checksums is required)
+    # like /usr/lib/postgresql/13/bin/initdb -D /data/postgresql/13/main --data-checksums
+    - name: Create the database
+      shell: "{{ pg_createcluster }} --datadir={{ pg_data_dir }} {{ pg_version }} {{ pg_cluster_name }} -- --data-checksums"
+      become: true
+      become_user: "{{ pg_admin }}"
+      when: drop_database.changed and inventory_hostname in groups['pg_primary']
+      register: create_database
+      changed_when: create_database.rc == 0
+      failed_when: create_database.rc != 0
+
+    # @FORPRIMARY
+    - name: Create a directory for archive WAL
+      file:
+        path: "{{ pg_data_dir }}/pg_archive"
+        state: directory
+        owner: "{{ pg_admin }}"
+        group: "{{ pg_admin }}"
+        mode: '0700'
+      when: inventory_hostname in groups['pg_primary']
+
+    # @FORPRIMARY
+    - name: Create a directory for logs
+      file:
+        path: "{{ pg_data_dir }}/log"
+        state: directory
+        owner: "{{ pg_admin }}"
+        group: "{{ pg_admin }}"
+        mode: '0700'
+      when: inventory_hostname in groups['pg_primary']
+
+    - name: Setup pg_hba.conf
+      template:
+        src: "/home/worker/ansible/files/pp.pg_hba.conf.j2"
+        dest: "{{ pg_conf_dir }}/pg_hba.conf"
+        owner: "{{ pg_admin }}"
+        group: "{{ pg_admin }}"
+        mode: 0640
+
+    - name: Setup postgresql.conf
+      template:
+        src: "/home/worker/ansible/files/pp.postgresql.conf.j2"
+        dest: "{{ pg_conf_dir }}/postgresql.conf"
+        owner: "{{ pg_admin }}"
+        group: "{{ pg_admin }}"
+        mode: 0640
+
+    # Turning on autorestart postgresql service.
+    # There is parameter [search_primary_node_timeout](https://www.pgpool.net/docs/latest/en/html/runtime-config-failover.html#GUC-SEARCH-PRIMARY-NODE-TIMEOUT) in pgpool2.
+    # (default) search_primary_node_timeout = 5min
+    # Parameter search_primary_node_timeout = 60 must be greater than StartLimitIntervalSec=30
+    - name: Turning on autorestart postgresql service
+      template:
+        src: "/home/worker/ansible/files/postgresql-service.j2"
+        dest: "/lib/systemd/system/postgresql@.service"
+        mode: 0644
+      when: pg_autorestart_postgresql_on
+
+    # @FORPRIMARY
+    - name: Start postgresql service {{ pg_service_name }}
+      systemd:
+        name: "{{ pg_service_name }}"
+        state: started
+        daemon_reload: yes
+      when: create_database.changed and inventory_hostname in groups['pg_primary']
+
+    # @FORPRIMARY
+    # psql -U username -d database -c "ALTER USER {{ pg_admin }} WITH PASSWORD '{{ pg_admin_password }}';"
+    - name: Change password for {{ pg_admin }} user in DB
+      become: true
+      become_user: "{{ pg_admin }}"
+      postgresql_user: 
+        name: "{{ pg_admin }}"
+        password: "{{ pg_admin_password }}"
+#      environment:
+#        PGOPTIONS: "-c password_encryption=scram-sha-256"
+      when: create_database.changed and inventory_hostname in groups['pg_primary']
+
+    # @FORPRIMARY
+    # Slots will be created with pg_basebackup
+    #- name: Create physical slot if doesn't exist
+    #  become: yes
+    #  become_user: "{{ pg_admin }}"
+    #  postgresql_slot:
+    #    slot_name: physical_one
+
+    - name: Сreating a special user {{ pg_replicator }} for primary-standby replication
+      become: true
+      become_user: "{{ pg_admin }}"
+      postgresql_user: 
+        name: "{{ pg_replicator }}"
+        password: "{{ pg_replicator_password }}"
+#      environment:
+#        PGOPTIONS: "-c password_encryption=scram-sha-256"
+      when: create_database.changed and inventory_hostname in groups['pg_primary']
+
+    # @FORSTANDBY
+    - name: Create standby databases
+      shell: "pg_basebackup -h {{ groups['pg_primary'][0] }} -U {{ pg_replicator }} -p 5432 -D {{ pg_data_dir }} -Fp -Xs -P -R -v -C -S {{ inventory_hostname | replace('-', '_') }}"
+      become: true
+      become_user: "{{ pg_admin }}"
+      when: create_database.changed and inventory_hostname in groups['pg_standby']
+      register: create_standby
+      changed_when: create_standby.rc == 0
+      failed_when: create_standby.rc != 0
+
+    # @FORSTANDBY
+    - name: Start postgresql service {{ pg_service_name }}
+      systemd:
+        name: "{{ pg_service_name }}"
+        state: started
+      when: create_standby.changed and inventory_hostname in groups['pg_standby']
