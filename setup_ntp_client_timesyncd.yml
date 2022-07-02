@@ -6,7 +6,7 @@
   tasks:
 
     - name: "Remove ntp, chrony packages"
-      apt:
+      package:
         name: [ntp,chrony]
         state: absent
 
