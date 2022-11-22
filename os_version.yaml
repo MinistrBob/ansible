@@ -1,0 +1,29 @@
+---
+- hosts: localhost
+  gather_facts: yes
+  become: true
+#  vars:
+#     version_id1: "{{ lookup('ini', 'ID section=global case_sensitive=True file=/etc/os-release') }}"
+#     version_id2: "{{ lookup('ansible.builtin.ini', 'VERSION_ID', case_sensitive=True, file='/etc/os-release') }}"
+  tasks:
+  - name: ansible_distribution
+    debug: msg="{{ ansible_distribution }}"
+  - name: ansible_distribution (trim space)
+    debug: msg="{{ ansible_distribution | replace(' ','') }}"
+  - name: ansible_distribution_major_version
+    debug: msg="{{ ansible_distribution_major_version }}"
+  - name: ansible_distribution_release
+    debug: msg="{{ ansible_distribution_release }}"
+  - name: ansible_facts lsb
+    debug: msg="{{ ansible_facts['lsb'] }}"
+  - name: ansible_os_family
+    debug: msg="{{ ansible_os_family }}"
+# CentOS 8 don't have lsb
+#  - name: ansible_facts lsb[id]
+#    debug: msg="{{ ansible_facts['lsb']['id'] }}"
+  - name: cat /etc/os-release
+    shell: cat /etc/os-release
+    register: response
+  - debug: msg="{{ response.stdout.split('\n') }}"
+#  - debug: msg="the value of version_id1 is {{ version_id1 }}"
+#  - debug: msg="the value of version_id2 is {{ version_id2 }}"

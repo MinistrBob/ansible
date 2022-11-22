@@ -1,0 +1,20 @@
+- hosts: kube
+  become: yes
+  become_method: sudo
+  gather_facts: no
+  tasks:
+    - name: Create folder /etc/systemd/system/docker.service.d
+      file:
+        path: /etc/systemd/system/docker.service.d
+        state: directory
+
+    - name: Setup Docker Proxy
+      copy:
+        src: /etc/systemd/system/docker.service.d/http-proxy.conf
+        dest: /etc/systemd/system/docker.service.d/http-proxy.conf
+
+    - name: Restart docker service
+      systemd:
+        name: docker
+        state: restarted
+        daemon_reload: yes

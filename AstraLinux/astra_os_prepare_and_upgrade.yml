@@ -1,0 +1,18 @@
+- hosts: all,!ntpservers
+  become: yes
+  become_method: sudo
+  gather_facts: no
+  tasks:
+    - name: Install common packages
+      package:
+        name: [apt-transport-https,ca-certificates,curl,vim,nano,mc,bash-completion,lvm2,telnet,net-tools,open-vm-tools,dialog,apt-utils,wget]
+        state: present
+      ignore_errors: True
+    - name: Execute localedef
+      shell: localedef -i en_US -f UTF-8 en_US.UTF-8
+    - name: Update and upgrade apt packages
+      become: true
+      apt:
+        upgrade: yes
+        update_cache: yes
+        cache_valid_time: 86400 #One day
